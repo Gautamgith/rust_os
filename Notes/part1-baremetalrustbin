@@ -1,0 +1,12 @@
+# Notes for the Rust binary
+
+Since we are creating an operating system kernel, it cannot depend on features provided by OS including threads, files, heap memory, network, random_numbers, standard output.
+
+For different hardware, OS needs to be compiled according to its architecture so the applications running on top can run by using abstracted functions. And when we build a new OS these abstarctions are not avialable to us when running on bare metal. The undefined behaviour is a result of the inconsistencies of abstarctions and HW architecture.
+
+Here in thsi blog post we will select a particular architecture where the OS kernel can run as it is built for that sepcifications.
+
+But some features are not built on OS but a feature of language which will be avialable even if there is no OS. When our kernel is compiled for the specific architecture by the compiler, the features provided by Language still work. These inlcude iterators, closures, pattern matching, option, result, string formatting and ownership system.
+
+At low level programming, any language will seperate the features OS provides by including them in a standard library. And the code free from the OS abstarctions is part of the core library. In another way, standard library is a way for OS to provide access to OS kernel functions.
+
