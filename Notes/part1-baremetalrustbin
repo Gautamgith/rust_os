@@ -9,4 +9,41 @@ Here in thsi blog post we will select a particular architecture where the OS ker
 But some features are not built on OS but a feature of language which will be avialable even if there is no OS. When our kernel is compiled for the specific architecture by the compiler, the features provided by Language still work. These inlcude iterators, closures, pattern matching, option, result, string formatting and ownership system.
 
 At low level programming, any language will seperate the features OS provides by including them in a standard library. And the code free from the OS abstarctions is part of the core library. In another way, standard library is a way for OS to provide access to OS kernel functions.
+	
+# Panic Handler
+As the name suggests, The panic handler function is invoked when a panic occurs. Panic is raised when things go wrong and we want to handle things step by step like closing opened file_descriptors, releasing memory, releasing locks, etc. The unwinding is supposed to do this process but right now ther is no such fucntionality at this step. Panics Hence the panic fucntion should the program which in this case is OS. But when the OS stops ther is nothing to do. The panic fucntion is not supposed to return. So the loop{} is the only way to do so.
 
+For an option of  halting the clock, an interrupt can restart it and hence is not a feasible option.
+
+Building with panic=abort means all panics are fatal/
+Building with panic=unwind means the unwinding functions which reach catch_unwind and try to recover. But it won't start from the same place so nver return type still holds.
+The default behaviour of the rust is to unwind on panic. The unwinding function is provided in standard lib with eh_personality lang item.
+
+Panics are not the primary error handling mechanism in this language, and they should be regarded as a best-effort reporting/debugging tool for non-recoverable errors.
+
+Link for discussion: https://users.rust-lang.org/t/why-panic-handler-returns-never-type/99941
+More about Panic in Rust: https://lucumr.pocoo.org/2014/10/30/dont-panic/
+
+# Start point
+Any application requires an entry point to begin execution. In contrast to general belief that main is the starting point is not correct. Languages will have a runtime system to setup stack, garbage collections etc. Rust binary linked to standard libarary uses native C code and hence the execution begins in a C runtime env called crt0. This runtime invokes Rust runtime maked by start attribute.
+
+Rust Source code Ref: https://github.com/rust-lang/rust/blob/bb4d1491466d8239a7a5fd68bd605e3276e97afb/src/libstd/rt.rs#L32-L73
+
+So intead we will override the entry point. Start lang item is dependent on the crt0 hence we need to modify the whole entry chain.
+Step 1: disable main function with #![no_main]
+Step 2: Override the _start() symbol so that execution starts in out defined start function.
+
+# Linker
+The above step would result in linker error.
+The linker compiles the code into a executable. Executables is low-level code which depends on the underlying hardware. In case of no specification the linker assumes dependency on C runtime which is not correct.
+
+Sol1: Build for bare metal target
+The specifications of host is managed by a string called target triple. We can get this info by running: rustc --version --verbose.
+My machine output has this value: x86_64-unknown-linux-gnu.
+By compiling for this host-triple, the compiler assumes an underlying OS as linux which uses C runtime by default. Then the linker tries to find the crt0 symbols which we have already removed and hence the errors.
+Instead we can compile for a bare metal host tripe like: thumbv7em-none-eabihf which is a embedded ARM system. Note the none part in the OS section. Add this by running: rustup target add thumbv7em-none-eabihf. And build via: cargo build --target thumbv7em-none-eabihf
+Now rejoice for you have begin on your jopurney for cross-compilation.
+
+Sol2: Specify the appropriate linker arguements.
+To specify to the linker that no C runtime is to be used we add these flags during build.
+cargo rustc -- -C link-arg=nostartfiles
