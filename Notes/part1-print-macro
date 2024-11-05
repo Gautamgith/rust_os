@@ -1,0 +1,14 @@
+# Adding Print Macro Support
+
+Since the printing code to VGA buffer contained unsafe code, it makes our kernel prone to error and mishaps. So we need to encapsulate this behaviour both for reducing code replication and also moving unsafe code under a safe interface.
+
+# VGA Text mode
+
+Text Buffer which is displayed on the screen is 25 rows and 80 columns. It is the address of the VGA hardware and when any character is written to this location, it is displayed according to the rule.Each character takes 2 bytes or 16 bits of space where the first bytes denotes the character and the next byte denotes how the character is displayed.
+The encoding of the first byte is similaer to ASCII but the correct information can be seen from thedetails of character set code page 437.
+
+Another detail to note is that VGA text buffer is accessible via normal memory mapped I/O at 0xb8000. This is the reason we are able to read and write to the hardware location of the VGA buffer throug RAM operations like mov  without any gimmics. Its complimentary method is Port based I/O which don't use memory operations and instead rely on other special instructions like in/out. 
+Read more bout serial bus and CPU address bus. An alternative to this I/O access is to use channels or I/O processors.
+
+
+
