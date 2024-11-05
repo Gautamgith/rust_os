@@ -10,5 +10,16 @@ The encoding of the first byte is similaer to ASCII but the correct information 
 Another detail to note is that VGA text buffer is accessible via normal memory mapped I/O at 0xb8000. This is the reason we are able to read and write to the hardware location of the VGA buffer throug RAM operations like mov  without any gimmics. Its complimentary method is Port based I/O which don't use memory operations and instead rely on other special instructions like in/out. 
 Read more bout serial bus and CPU address bus. An alternative to this I/O access is to use channels or I/O processors.
 
+# Print Module
 
+To provide print support we introduce it as a module. We start with a Writer Interface which includes creating enum for color, structs for ColorCode, ScreenChar and Bufferof VGA Screen.
+We derive the copy, debug and eqality traits to make these data structures printable and comparable.
+For enum we use u8 to be able to store the color codes as u8. Also to allow unused variants we add dead_code.
 
+Another point to note is to match the layout of the VGA address mapping to that of out created structs. We need the data layout of colorCode to match that of u8 while ScreenChar to match that of C style. This is done by using attributes transparent for single field structs and repr(C) for multiple field to match C-style which is more compatible with hardware data layout mapping.
+Other code details include adding static lifetime for buffer location of VGA hardware which doesn't change. The access for VGA location is unsafe by dereferencing so it is in an unsafe block.
+
+Volatile: To prevent compiler to do unnecessary or erroneous optimization we wrap the ScreenChar into a Volatile wrapper. We write to the locations without reading back the buffer so the compiler might optimize such memory based I/O to do some optimizations of the writes.
+Also writing an implementation of core::fmt:Write trait allow us to use write! macro for integers, decimals.
+
+# Global Interface
