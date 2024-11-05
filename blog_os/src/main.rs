@@ -7,6 +7,7 @@ use core::panic::PanicInfo;
 /// This func is called onPanic by compiler
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> !{
+    println!("{}", info);
     loop{}
 }
 
@@ -15,8 +16,12 @@ static HELLO: &[u8] = b"Red rust is a mood!";
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     
-    vga_buffer::print_something();
-
+    // vga_buffer::print_something();
+    
+    use core::fmt::Write;
+    //vga_buffer::WRITER.lock().write_str("Hello from the other side!!").unwrap();
+    //write!(vga_buffer::WRITER.lock(), ", some numbers: {} {}", 42, 1.337).unwrap();
+    println!("Red Rust is {}!!", "eternal");
     /*let vga_buffer = 0xb8000 as *mut u8;
 
     for (i, &byte) in HELLO.iter().enumerate() {
