@@ -23,3 +23,30 @@ Volatile: To prevent compiler to do unnecessary or erroneous optimization we wra
 Also writing an implementation of core::fmt:Write trait allow us to use write! macro for integers, decimals.
 
 # Global Interface
+
+Creating a Writer to write to VGA display need to be global, so that we don't have the unsafe code  at various places. This means we make the Writer static but statics are initialized at compile time.The compiler is not able to convert the raw pointer to references at compile time. So we use lazy_statics which allows lazily defining statics which evaluates only when the static value is used during runtime.
+Another issue is the mutability of the static Writer. Since we are modifying this we need this to be mutable. But a static mutable is unsafe due to data races etc. Similarily if using immutable static with cell type like RefCell or UnsafeCell for interior mutability, there is an issues of Sync. To solve this use we can use Mutex from standard library but for our baremetal we can use spinlock which doesn't work based on threads.
+
+For more details of Rust coding pardigm read:
+1. Ownership: https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html
+
+A data race is similar to a race condition and happens when these three behaviors occur:
+Two or more pointers access the same data at the same time.
+At least one of the pointers is being used to write to the data.
+There’s no mechanism being used to synchronize access to the data.
+
+At any given time, you can have either one mutable reference or any number of immutable references.
+References must always be valid.
+
+2. References with Lifetimes: https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html
+We can define lifetimes for functions where rust cannot identify the returned value refers to the lidetime of which borrowed value. This is also used in Generic function, traits etc.
+'static is a special lifetime which is valid for the duration of the whole program.
+
+After writing a lot of Rust code, the Rust team found that Rust programmers were entering the same lifetime annotations over and over in particular situations. These situations were predictable and followed a few deterministic patterns. The developers programmed these patterns into the compiler’s code so the borrow checker could infer the lifetimes in these situations and wouldn’t need explicit annotations.
+
+3. Immutables with interior mutability: https://doc.rust-lang.org/book/ch15-00-smart-pointers.html
+
+Box<T> for allocating values on the heap
+Rc<T>, a reference counting type that enables multiple ownership
+Ref<T> and RefMut<T>, accessed through RefCell<T>, a type that enforces the borrowing rules at runtime instead of compile time
+
