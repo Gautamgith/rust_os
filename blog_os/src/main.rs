@@ -43,4 +43,3 @@ fn trivial_assertion() {
     // serial_println!("[ok]");
 }
 
-
