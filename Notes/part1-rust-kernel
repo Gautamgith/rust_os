@@ -1,0 +1,36 @@
+# Moving from a baremetal library to Kernel
+
+# The Boot process
+The initial code being run is firmware code stored in ROM. This is generally intialted by a Jump instarction to the location where firmware code is stored [fixed]. It performs power on self test (POST), detects RAM, pre-nitializes CPU and other hardware. For x86 there is the old BIOS and newer UEFI standard for firmware code.
+
+BIOS: After the initial code runs in 16 bit or real mode, the control is transferred tot he 512 bytes booloader code. In case of longer code it is separated into stages where the later stage is loaded by the earlier stage code. The bootloader switches to 32-bit protected mode and then to 64 bit long mode. After performing these operations and loading memory map, control is transfered tot he kernel/OS.
+
+Multiboot: To standardise the bootloader and reduce dependency of OS on bootloader and vice a versa, the interface b/w bootloader and OS was specified by Free Software Foundation. The reference Implementation is GNU GRUB, a popular bootloader for Linux.
+
+Multiboot header needs to be added to the kernel to be found. Support is only for 32 bit protected mode and adjusted default page size needs to be linked to kernel. So we will add Multiboot support later in bootimage tool.
+
+# Rust Nightly
+
+rustup override set nightly
+This branch has many experimental features available necessary for kernel development. Optionally set nightly in rust-toolchain file at project root directory.
+
+# Target Specification
+
+This is sepcified via a json file. --target x86_64-blog_os.json
+The target-triple is set to an OS type none. Also the OS field is set the same. Next part is to set the linker from system default to cross compile type ld.lld available as rust-lld. We can also specify the panic startegy as abort for the core library which needs to be recompiled according to our target. redzone feature is disabled to stack corruption. More details here: https://os.phil-opp.com/red-zone/
+Another thing to disable is support for SIMD instructions via -mmx,-sse. The SIMD support slows kernel due to additional save restore operations of SIMD state (512-1600 bytes). Enable soft-float to cover  floating operations in SIMD disable.
+
+The .config directory and config.toml file needs to be created if they are not present.
+
+# Printing to Screen
+
+We will use VGA Buffer to print to screen. Most Hardware can be used by accessing the memory of the hardwares directly. But the kernel will restrict access to these memory locations for safety and other purposes. But since we are writing a baremetal code we can access memory to use VGA display.
+
+See NCurses for a deeper understanding of printing to screen: https://tldp.org/HOWTO/NCURSES-Programming-HOWTO/intro.html
+
+# Running the kernel
+
+Since, this is a new kernel image, we need a OS to boot this image. Fortunately we don't need a new hardware to run this as qemu can run this image easily by emulating out target system.
+Note: Installing qemu by package manager is much easier than building it from repo.
+
+

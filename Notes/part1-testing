@@ -1,0 +1,46 @@
+# Add testing framework for kernel functions
+
+We can run test in rust by using cargo test in our project but Rust's built in test framework depends on std library. So we replace the default test framework through custom_test_framwork feature. This runs test attributed by [test_case] attribute ina user defined runner function.
+
+Next we need to setup the entry point for our runner. The deafult functionality is to invoke test_runner from the generated main function. But we use no_main attribute. So we use the rexport test harness main attribute to rename it to a different name and call this function in our _start function.
+
+# Exiting QEMU
+
+We should be able to run tests without user interaction but right now we need to manually exit QEMU. We use the bootimage runner provided test_args to add isa-debug-exit device for test cases.We use the unused 0xf4 port for out exit device. We use port mapped I/O for communication to our qemu exit device. Instead of manually invoking port mapped I/O instruction in/out we use abstarction provide by x86_64 crate. Using this crate we create functionality to exit QEMU in out test runner function.
+We also map exit codes for test framework to recognize Success and Failure Cases.
+
+# printing to Serial Console
+
+We need to print to the console to see the test results. So as a way to print to the console we send data via the Serial Port. This Interface is no longer found in modern computers. QEMU can send redirect the bytes sent over serial to the host's standard output so we can see them in out terminal output.
+
+# UART
+The chips implementing serial interface are called UARTs. On x86 we have many UART models and most of them compatible with 16550 UART. We can use this because we don't need the advanced features provide by other UART models. We add this to our crate and we can use serial port to send data and hence see it on our console instead of QEMU. We add thsi code under  a differnt module named serial. The structure is simialr to our VGA text buffer module but instead of memory mapped I/O we use port mapped I/O. We create similar functionality for printing as we did in VGA print functions and macros.
+For redirection we pass -serial, stdio arguements for test cases. We also modify the panic functions for test cases to print to terminal by providing a different panic function for testing.
+Next we can just outright hide QEMU during testing.
+
+Add printing for test by implementing Testable trait which has print information for tests.
+
+# Integration Tests
+
+by Convention Integration tests are put into a tests directory in the project root. Integration tests as the name suggests are separate executables form our main.rs. Since these are separate from main we need to define the attributes, entry point, panic handler and other functions.
+
+# Library
+
+To provide the implemeted functionalities we move our common functions from main to a lib.rs file. The lib.rs file is a special file like main and is recognised by cargo.
+We move our test functions and attributes to lib.rs. We make test_runner public without test attribute. For cases when the library is used without main, we provide a entry _start fuunction and panic handler. We also move QEMU related code to library. Also the no_main attribute is added conditionally for integration test when it is separate from main.rs compilation.
+
+Now use this library to import functions for use cases like integartion test. Running integration tests in a basic boot environment can test fucntionality without calling any intialization routines in main functions. The basic idea of integration tests is to test feature in a separate enviorenment and make sure that the code keeps working with new functionalities. The integration test have greater control over the env where these tests are run providing better checks.
+
+Some ideas for possible future tests are:
+
+CPU Exceptions: When the code performs invalid operations (e.g., divides by zero), the CPU throws an exception. The kernel can register handler functions for such exceptions. An integration test could verify that the correct exception handler is called when a CPU exception occurs or that the execution continues correctly after a resolvable exception.
+Page Tables: Page tables define which memory regions are valid and accessible. By modifying the page tables, it is possible to allocate new memory regions, for example when launching programs. An integration test could modify the page tables in the _start function and verify that the modifications have the desired effects in #[test_case] functions.
+Userspace Programs: Userspace programs are programs with limited access to the system’s resources. For example, they don’t have access to kernel data structures or to the memory of other programs. An integration test could launch userspace programs that perform forbidden operations and verify that the kernel prevents them all.
+
+# Tests that should Panic
+
+Writing tests that fails is as important as passing tests if not more! So we can test for invalid behaviour for functions, routines, initializations, access etc.
+But currently writing tests that panic is not supported by no_std environment. The best we are able to do is runa single test that panics and exits from the QEMU env.
+Maybe writing a panic handler which can catch these panics safely while also passing test result information to test framework can resolve this issues but the extent of code modifications or feasability is not known to me at this moment.
+For our case since a single test case can be checked the test runner code is removed for panicking test.
+
