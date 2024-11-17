@@ -28,7 +28,12 @@ fn panic(info: &PanicInfo) -> ! {
 pub extern "C" fn _start() -> ! {
     
     println!("Red Rust is {}!!", "eternal");
-    
+    blog_os::init();
+
+    // Breakpoint here
+    x86_64::instructions::interrupts::int3();
+
+    println!("I am speed!");
     #[cfg(test)]
     test_main();
 
