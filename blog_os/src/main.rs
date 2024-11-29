@@ -29,6 +29,16 @@ pub extern "C" fn _start() -> ! {
     
     println!("Red Rust is {}!!", "eternal");
     blog_os::init();
+    
+    fn stack_overflow() {
+        stack_overflow();
+    }
+    // stack_overflow();
+
+    // page fault
+    //unsafe {
+    //    *(0xdeadbeef as *mut u8) = 42;
+    //};
 
     // Breakpoint here
     x86_64::instructions::interrupts::int3();
