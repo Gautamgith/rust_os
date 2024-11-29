@@ -13,7 +13,7 @@ use blog_os::println;
 #[panic_handler]
 fn panic(info: &PanicInfo) -> !{
     println!("{}", info);
-    loop{}
+    blog_os::hlt_loop();
 }
 
 #[cfg(test)]
@@ -41,13 +41,17 @@ pub extern "C" fn _start() -> ! {
     //};
 
     // Breakpoint here
-    x86_64::instructions::interrupts::int3();
+    //x86_64::instructions::interrupts::int3();
 
     println!("I am speed!");
     #[cfg(test)]
     test_main();
-
-    loop {}
+    
+    //loop {
+    //    use blog_os::print;
+    //    print!("-");        // new
+    //}
+    blog_os::hlt_loop();
 }
 
 
