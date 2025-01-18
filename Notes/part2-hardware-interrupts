@@ -1,0 +1,37 @@
+Part 2: Hardware Interrupts
+
+ 
+
+Another situation when the CPU needs to halt the current execution of its code and switch to handling a different part of the code is Hardware interrupts. We will add entries similar to exception handlers for Hardware interrupts to our IDT. We begin will handling periodic timer interrupts and then go with handling Hardware devices like Keyboard. This mechanism is much more efficient than polling mechanism.
+
+ 
+
+Handling of various different hardware devices are aggregated into an interrupt controller to handle these interrupts. And these are generally programmable (PIC) providing priority setup. Since the hardware interrupts are independent they introduce asynchronous behavior in our kernel. We now need to be careful of concurrency related issues though a large part is already handled by Rust’s ownership model.
+
+ 
+
+# The 8259 PIC
+
+We use this than the mode advanced APIC because of its simplicity in setting it up. It has a secondary PIC attached to it for handling extra devices. The PIC can be configured via a command and data port (I/O Port). We need to override the default mapping since we already have the first few interrupts assigned for our exceptions. ( Override with an offeset) And we make use of the available pic8259 crate.
+
+ 
+
+# Initializations
+
+We start by creating a PICS instance and initializing it. Next we enable the interrupts which enables the hardware timer by default. To handle this we add a handler and print a . in the function.  The PIC needs an End of Interrupt signal before it can receive another interrupt.  Using notify_end_of_interrupt function solves this issue.
+
+ 
+
+# Deadlock and Race conditions
+
+Since we have lock acquired during printing and the interrupts occur asynchronously we can provoke a deadlock.  To fix the deadlock we use the without interrupts function. This is not the correct way to fix this issue.
+
+Race conditions are also introduced for e.g. when testing the print function and reading back. Since we are printing a dot in the Timer interrupt handler, this will introduce a race condition in our test scenario. We fix this issue in a manner similar to above case.
+
+Next we add hlt instruction to improve on our looping construct defining halting.
+
+ 
+
+# Keyboard Input
+
+We will next improve our Keyboard interrupt handler to recieve input and interpret its meaning and respond by printing it back. Using the End of Interrupt and Scancodes translation we work out the details of the handler function. The already available pc-keyboard crate helps finalize the details.

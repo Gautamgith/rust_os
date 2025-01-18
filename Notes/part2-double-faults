@@ -1,0 +1,90 @@
+Part2 - Double Faults
+
+ 
+
+What should happens when our exception handlers don’t work as expected or fail. We have a special exception handler aka double fault handler to handle such cases. This should resolve well known issues in our known space. Eventually if even this fails this leads to triple fault which should just reset the system. Ironically most resolution by IT support also suggests restarting the system to resolve issues.
+
+The well known issues are defined in AMD64 manual. These are structured in a way that most critical issues result in double faults while others just follow a sequential handling of exceptions. 
+
+ 
+
+Exemple gracia: What happens when an exception occurs but there is no handler. Or if there is a handler function but this function causes an exception. Logically this special handler should resolve issues in such a way that we don’t fall in an exception handler loop or are unable to shut down gracefully. 
+
+ 
+
+The double fault handler is diverging. Why? The double fault handler is a result of a previous exception not completing its’s job when an another exception occurred. It makes zero sense to continue at the next instruction with a faulty state. Why not resolve the previous exception within this exception? -> The job of this double fault handler is to prevent loops of exception handlers so for these critical cases the issues are resolved in a way that we can shut down gracefully. What does shut down gracefully even mean? What does it matter if we do a double fault or triple fault as both don’t return to the previous state.
+
+ 
+
+Shutting down gracefully means we can walk down the stack frames and create a core dump to do debugging later. The case of double faults denote a high probability of bugs in out kernel. So we just want to abort gracefully creating a core dump to debug our kernel later and fix our kernel in a patch. Another way to think in terms of multi-threding is what to do when a thread causes a double fault. If it is a user-space thread we might just stop that thread and output an error mesage. In case of kernel space thread we want to shut down our kernel to recover from a faulty state by restarting.
+
+Note for a multi-threaded Web server, it is very cost effective to just kill the buggy thread and return some error for the particular request [like retry] or just reprocess the request on a new thread. Most of our services are multi-threaded so this might be good viewpoint in case of thinking about consistency/continuity and predictability.
+
+Read: https://f.osdev.org/viewtopic.php?t=40375
+
+ 
+
+# Kernel Stack Overflow case
+
+Let’s discuss a case of stack overflow resulting in double fault. When we run a recursive function it keeps allocating stack frames on the stack and if we run out of stack we hit the guradpage which maps to nothing. Accessing it causes page fault. When accessing page fault handler we try to load Interrupt stack frame on the stack causing another Page fault -> Double fault. Next loading double fault handler causes another page fault -> Triple fault[reboot].
+
+ 
+
+Switching stacks to ensure that page fault handler can works even if there is an overflow. Use a special stack frame for double fault. The switch needs to happen at a hardware level as our stack isn’t functional. These good stacks for Interrupt handling are presented by Interrupt stack table. Since this switching needs to happen before anything is pushed to the stack to prevent triple fault.
+
+ 
+
+ 
+
+# Stack Overflow
+
+There are limited resources for a particular system and we need to have a mechanism for exceeding that limit and in case of stack we have a Guard Page at the end of our stack. As the name suggests its main function is to prevent corruption of our memory by exceeding limit of our stack. This page is set up by the bootloader for our kernel stack and doesn’t map to any physical frame.
+
+ 
+
+# Switching Stacks
+
+The x86_64  architecture has a predefined way to switch to a well known stack when an exception occurs. This is done by an old legacy structure called TSS which includes IST. It also includes Priviledge Stack Table which is required for change in Priviledge from User to Kernel for running certain functions.
+
+ 
+
+# Creating TSS
+
+The TSS is a special structure to store the CPU state before context switch. The descriptor for this structure is stored in GDT.
+The CPU has a register called the "TR" (or Task Register) which tells which TSS will receive the old CPU state. When the TR register is loaded with an "LTR" instruction the CPU looks at the GDT entry (specified with LTR) and loads the visible part of TR with the GDT entry, and the hidden part with the base and limit of the GDT entry. When the CPU state is saved the hidden part of TR is used.
+
+ 
+
+The x86_64 crate already provides a struct for creating TSS. We write this new code in a new module gdt.rs . We haven’t defined Memory Management yet so we just use a static mut array as our stack storage. Since it is a static mut we need unsafe keyword. Also we haven’t implemented a guard page for this stack so any stack intensive operation will corrupt our memory. 
+
+Note: Virtual Address will give us the starting address which is the bottom address. We write the top address as our stack grows downwards on x86.
+
+ 
+
+Now we need to add this TSS to our GDT and tell our CPU to load it. This is our initialization step. So we create a new GDT structure and add kernel segment and TSS segment in its entries and ask CPU to use this GDT instead of the one provided by the boot loader crate. We create an GDT init function in gdt.rs and call this init in our Library initialization sequence before our interrupt initialization.
+
+ 
+
+http://www.osdever.net/bkerndev/Docs/gdt.htm
+
+>Note that GRUB already installs a GDT for you, but if we overwrite the area of memory that GRUB was loaded to, we will trash the GDT and this will cause what is called a 'triple fault'. In short, it'll reset the machine. What we should do to prevent that problem is to set up our own GDT in a place in memory that we know and can access. This involves building our own GDT, telling the processor where it is, and finally loading the processor's CS, DS, ES, FS, and GS registers with our new entries. The CS register is also known as the Code Segment. The Code Segment tells the processor which offset into the GDT that it will find the access privileges in which to execute the current code. The DS register is the same idea, but it's not for code, it's the Data segment and defines the access privileges for the current data. ES, FS, and GS are simply alternate DS registers, and are not important to us.
+
+ 
+
+ 
+
+The Final Steps
+
+According to above comments we  still need to load the correct CS and TSS segment registers for our processor.
+
+After out TSS registor is updated with our new TSS descriptor we are able to use a new stack for our double fault handler. We need to specify this in our IDT initialization while adding a DF handler. Fortunately for us our crates provide us with set_stack_index function to set the stack to be used in case of DF.
+
+ 
+
+Testing
+
+The execution doesn’t continue after double faults so we don’t have multiple tests under this file and hence we don’t need a test harness.
+
+We create a custom _start function with gdt init and custom idt instead of our library since we want to change our handler to register a success of test when it quits qemu. 
+
+ 

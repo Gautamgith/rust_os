@@ -1,0 +1,43 @@
+# CPU Exceptions
+Due to dynamic nature of code there can be various erroneous situations which require OS to handle the instructions gracefully or not. The IDT provides a list of handler functions to such well known situations. These situations may differ on different architecture and the underlying hardware. This tutorial focuses on x86. The exception type will depend on how we define/assume an OS functionality is structured. For example an instruction will contain Opcode which determines how it should be executed but if the underlying OS doesn't support that opcode it should give an error or if the current mode of system only supports 16-bit integers then overflow of the value may result in an exception. Some abstract issues are mathematical error like divison by 0. Other focus on the memory structures like illegal memeory access, page fault, segment not present, invalid tss. There are other exceptions which focus on different aspects of OS like devices, security etc. The exceptions works to provide more resilience to the OS from unexpected situations resulting in inconsistency/erroneous states. But a few expections are structured to provide various functionality by passing control back to kernel from user space like breakpoint, interrupts etc.
+
+# IDT Type
+The IDT table is used directly by the hardware soa predefined format needs to be followed.
+When an exception occurs, the CPU roughly does the following:
+1. Push some registers on the stack, including the instruction pointer and the RFLAGS register. (We will use these values later in this post.)
+2. Read the corresponding entry from the Interrupt Descriptor Table (IDT). For example, the CPU reads the 14th entry when a page fault occurs.
+3. Check if the entry is present and, if not, raise a double fault.
+4. Disable hardware interrupts if the entry is an interrupt gate (bit 40 not set).
+5. Load the specified GDT selector into the CS (code segment).
+6. Jump to the specified handler function.
+
+# Interrupt Calling convention
+The handler functions have extern "x86-interrupt" type.
+The expection functions differ from normal functions in the fact that normal fucntions are invoked voluntarily by the compiler by inserting call instruction but the exceptions can occur at any instructions. To further investigate this difference we need to look at the calling conventions. The rule son how the function parameters are passed and how results are returned depnd on the ABI.
+Note: Rust doesn't follow C ABI and there is no Rust ABI yet. So the extern keyword forces the compiler to follow a specific ABI.
+
+The calling convention is based on the difference b/w preserved and scratch registors. The observation is with respect to a function call and what happens in transit is of no concern. The preserved registers need to be preserved across function call so the resposibility of this lies on the function such that at the end of the function it returns them to the original state. While scratch registers fall under the responsibilty of caller to save them before the function call and restore them later. This means the function is free to use these registers for calcualtions, process etc.
+The meaning of responsilbility can be understood in how the given function will ne translated into Assembly code so that when the instryuctions get excecuted the following responsibility hold. Eg: The function translation uses scratch registers without any specific condition but the preserved registers need to be restored before return statement.
+While for a function call, the call instruction needs to be preceded by saving of scratch registers.
+
+Now thinking through this in terms of assembly code, since the compiler doesn't know when an exception might occur. Note that the hardware directly uses the IDT table when an exception occurs. So as a result we cannot use a calling conventions that relies on caller to save registers. Instead we use a convention to preserve all registers i.e. x86-interrupt calling convention.
+
+# Implementations
+
+Read the article to understand the stack frame and push operations when using C calling conventions and hence understanding the difference b/w normal C calling convention and x86 interrupt calling convention. Also better to understand how push/pop, call/ret instructions work.
+
+ 
+
+New module for interrupts. For simplicity we begin with a simple exception int3 or the breakpoint exception used in debugging.
+
+Out int3 handler will just print the stack frame and continue I.e. simple print functionality.
+
+We begin with initializing our IDT and add the handler function to the IDT. Rust provides abi_x86_interrupt as an experimental feature. Since the hardware directly uses this IDT we need to load this IDT to an appropriate location.
+
+Another issue is about the lifetime of this IDT structure which is created. Since we need to use this outside of this initialization function i.e. static lifetime. But we dont’ have a heap implementation yet. So we go with the static way but this forces us to use lazy_statics to allow mutability [ add handler entries] with safety.
+
+For a common place for initialization routines we add the init function to the lib.rs so the various start functions can use this common code without variance.
+
+ 
+
+Next add a test in the lib file to test this functionality works independently of the different start functions. Since lib doesn’t have an init add the init function to the start function.
