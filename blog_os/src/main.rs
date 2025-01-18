@@ -13,7 +13,7 @@ use blog_os::println;
 #[panic_handler]
 fn panic(info: &PanicInfo) -> !{
     println!("{}", info);
-    loop{}
+    blog_os::hlt_loop();
 }
 
 #[cfg(test)]
@@ -28,11 +28,30 @@ fn panic(info: &PanicInfo) -> ! {
 pub extern "C" fn _start() -> ! {
     
     println!("Red Rust is {}!!", "eternal");
+    blog_os::init();
     
+    fn stack_overflow() {
+        stack_overflow();
+    }
+    // stack_overflow();
+
+    // page fault
+    //unsafe {
+    //    *(0xdeadbeef as *mut u8) = 42;
+    //};
+
+    // Breakpoint here
+    //x86_64::instructions::interrupts::int3();
+
+    println!("I am speed!");
     #[cfg(test)]
     test_main();
-
-    loop {}
+    
+    //loop {
+    //    use blog_os::print;
+    //    print!("-");        // new
+    //}
+    blog_os::hlt_loop();
 }
 
 
