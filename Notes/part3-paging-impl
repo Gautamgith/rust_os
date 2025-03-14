@@ -1,0 +1,52 @@
+# Paging Implementation
+Accessing Page Tables from Kernel: The kernel code cannot access physical memory in our implementation as the translation function for Page table is built in our bootloader.
+Need support from bootloader.
+ 
+# Accessing Page Tables: 
+The entries in page tables are physical addresses but the addresses kernel is reading are virtual addresses. As a solution we can try different solutions from accessing page table frames:
+
+1. Identity Mapping of page table addresses
+2. Map at fixed offset of page table frames
+3. Map complete physical memory
+4. Temporary mapping
+5. Recursive Page tables
+ 
+# Identity mapping: For page table frames we do an identity mapping and this works for all levels of page tables.
+but this will clutter the virtual address space. Also creation of new page table frames is cumbersome.
+
+# Map at a fixed offset: We can do the identity mapping at a fixed offset quite a distance bit away from the starting addresses or physical address range. Lets say 10TiB -> 10TiB + physical memory size. This works for larger virtual address ranges possible in x86_64.
+Restrictions include need to create a new mapping when new page table frames are created. Also each process requires a different page table mapping.
+
+ 
+# Map the complete Physical memory: By mapping the complete physical address space we can allow accessing to address spaces of all other processes as well.
+This takes more space than before for extra mapping and can be issue for small devices.
+For x86_64 this can be easy as we can use huge pages. 32 GB of physical memory only require one level 3 and 32 level 2.
+
+Note: We need to create mapping even for complete mapping as we cannot use offset because out bootloader uses page tables. The idea behind accessing physical addresses is to create a separate Mapping according to our requirements and pass it to bootloader. Now when we want to access any particular physical address we calculate the virtual address which would map to the physical address. Then accessing this virtual address normally would be translated by bootloader using new mapping into accessing required physical address.
+
+ 
+# Temporary Mapping: For devices with small amount of memory, a single identity mapped level 1 table is enough.
+Level 4, Level 3, Level 2: 0th entry gives us a level 1 page table which can be modified for creating temporary.
+Modification includes an identity mapping for the page table location and then modifications to other 511 entries to create temporary mapping. If the other level tables are under this range of 2MiB then using temporary mapping we can modify Level 2, Level 3 and Level 4 tables as well.
+The process involves resetting the temporary mapping back after use. This means we only use 512 virtual pages or 4KiB of physical memory. This is quite a cumbersome process.
+
+# Recursive Page Tables: 
+Consider setting an unused entry in Level 4 Page Table to the value in CR3. This means when the try to access particular address starting with this index we are tricking the Translation function/kernel code to use Level 4 page table as Level 3 page table.
+
+The result of this trick is that when we reach level 1 page table the kernel translation function thinks it is pointing to an actual frame. But instead it is still pointing to a Level 1 Page table. Modifications to frame is the actual operation to be allowed by read or write syscall. But the modifications are being made on the Page table.
+This trick allows us to read and write to Page tables. Using this trick multiple times can allow to read/modify higher Page Table.
+
+Disadvantages:
+1. It occupies a large amount of virtual memory (512 GiB). This isn’t a big problem in the large 48-bit address space, but it might lead to suboptimal cache behavior.
+2. It only allows accessing the currently active address space easily. Accessing other address spaces is still possible by changing the recursive entry, but a temporary mapping is required for switching back. We described how to do this in the (outdated) Remap The Kernel post.
+3. It heavily relies on the page table format of x86 and might not work on other architectures.
+ 
+# Bootloader Support: 
+Bootloader provides support for map_physical_memory and recursive_page_table controlled through cargo features.
+Using BootInfo structure and memory_map and physical_memory_offset fields we can access the above mapping functionality.
+ 
+# Dummy Translation function:
+Using the offset address we can access the successive page tables[converting physical page tables by adding offset and accessing this virtual address] and this allows us to calculate the physical address.
+Create a memory module for translation using OffsetPageTable and bootloader provided functions.
+Create a new mapping by defining create_example_mapping.
+Creating new mapping requires memory which in turn requires allocating frames.

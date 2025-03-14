@@ -1,0 +1,33 @@
+# Introduction to Paging 
+
+Operating system tasks include isolating programs from each other. 
+Memory Protection Unit in ARM processors allows defining separate regions in memory according to access permissions. 
+On x86 this can be done by 2 approaches segmentation and paging.
+
+# Segmentation: 16-bit addresses only allow 64KiB of memory to be addressable. To expand this additional segment registors containing offset addresses was used to 1MiB.
+The segment addresess are automatic according to kind of memory like CS, SS, DS, ES, FS and GS.
+Protected mode allowed access control feature to be added later. The segment descriptors contains index to a GDT containing [offset, segment size, access permissions]. By loading GDT for each process, memory access can be confined and processes can be isolated from each other. 
+
+# Virtual Memory: Instead of directly accessing physical memory directly, we abstract the memory and add a translation step in between.
+In segmentation step this was adding an offset address. The addresses before translation are called virtual addresses. The addresses after translation are physical addresses. 
+This allows 2 virtual addresses to point to same physical address or same virtual address point to different address based on translation function.
+This means we can now aim for both resource sharing among processes and process isolation.
+
+# Fragmentation and Paging: The constant memory allocation and deallocation might leave gaps and might render it unusable. To defragment this state would require overhead operations. Enter Paging.
+Divide both the physical and virtual memory into fixed block size called pages.
+To now access the translation function we need to create a table mapping the pages called page table.
+For larger address space single page table, memory is wasted on unmapped pages. Enter Multi-level Page Tables.
+
+# Paging on x86_64:
+-> 4-level page table according to address bits:
+Page size = 4KiB
+Each entry [64bit address] = 8 Bytes [Only translated address is required] 
+No of entries = 4*2^10 Bytes/ 8Bytes = 512 entries
+Physical address of active level 4 Page Table is stored in CR3 register.
+Since the translation is done by kernel code it can access physical addresses but user level processes can only access virtual addresses using sys call.
+
+# The Translation lookaside Buffer
+Each translation requires 4 memory access. The last few translations are cached in the TLB. 
+Unlike the other CPU caches, the TLB is not fully transparent and does not update or remove translations when the contents of page tables change. This means that the kernel must manually update the TLB whenever it modifies a page table. To do this, there is a special CPU instruction called invlpg (“invalidate page”) that removes the translation for the specified page from the TLB, so that it is loaded again from the page table on the next access. The TLB can also be flushed completely by reloading the CR3 register, which simulates an address space switch. 
+
+# Page fault: The CR2 register is automatically set by the CPU on a page fault and contains the accessed virtual address that caused the page fault.
