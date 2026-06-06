@@ -1,0 +1,191 @@
+# Notes Review: OS in Rust (Philipp Oppermann's Tutorial)
+
+Overall verdict: Solid understanding with genuine insights — not just parroting the tutorial.
+You ask follow-up questions, make comparisons to real-world systems, and flag things you
+don't fully understand.
+
+---
+
+## Part 1 — Bare Metal Rust Binary
+
+**What's good:**
+- Correctly identifies that core library features (iterators, closures, pattern matching) work
+  without an OS because they're language-level, not OS-level.
+- Panic section shows original thinking: linking to the Rust forum discussion asking "why does
+  panic_handler return `!`?" — looking it up rather than accepting it is a good habit.
+- The `panic=abort` vs `panic=unwind` distinction is correct; consequence (unwinding needs
+  `eh_personality`, which comes from std) is understood.
+- Entry chain (crt0 → `start` lang item → `main`) is correct. "In contrast to general belief
+  that main is the starting point is not correct" shows you internalized this.
+
+**Minor gap:**
+- Sol2 flag in the notes is `link-arg=nostartfiles`. Verify you have the exact flag syntax right.
+  The codebase uses the bare-metal target approach (Sol1), not Sol2.
+
+---
+
+## Part 1 — VGA Print Macro
+
+**What's good:**
+- Correctly explains *why* `Volatile` is needed: the compiler might eliminate writes-without-reads
+  as dead stores — the correct reason, not just "it's required."
+- `repr(transparent)` for `ColorCode` and `repr(C)` for `ScreenChar` are correctly identified
+  with the *why* (matching hardware layout).
+- lazy_static + spinlock reasoning chain is correct: `RefCell`/`UnsafeCell` fail because they're
+  not `Sync`, stdlib `Mutex` not available, so spinlock is the answer.
+
+**Gap (code vs notes):**
+- `Buffer` in `vga_buffer.rs:49` also has `#[repr(transparent)]` — notes only mention `ColorCode`.
+  Buffer wraps the 2D array and needs to match hardware layout exactly. Worth adding.
+
+**Genuine insight:**
+- Mentioning port-mapped I/O vs memory-mapped I/O and linking out to serial bus / CPU address bus
+  shows thinking beyond the immediate task.
+
+---
+
+## Part 1 — Rust Kernel (Boot Process)
+
+**What's good:**
+- BIOS boot flow (real mode → protected mode → long mode) is correct.
+- Red zone, SIMD disable, soft-float all correctly connected. Retaining the specific SIMD state
+  size (512–1600 bytes) shows careful reading.
+- NCurses reference shows connecting the VGA buffer abstraction upward to real tooling.
+
+No significant gaps here.
+
+---
+
+## Part 1 — Testing
+
+**What's good:**
+- Custom test framework flow (`#[test_case]` → runner → renamed harness main → called from `_start`)
+  is correctly understood.
+- QEMU ISA debug exit at port `0xf4` is correct; matches `lib.rs:84`.
+- Integration tests as separate executables with their own entry points / panic handlers is correct;
+  matches the conditional `#[cfg(test)]` setup in `lib.rs`.
+
+**Original insight (notable):**
+- "Maybe writing a panic handler which can catch these panics safely while also passing test result
+  information to test framework can resolve this issue but the extent of code modifications or
+  feasibility is not known to me at this moment." — Not from the tutorial. You identified a real
+  limitation and imagined a direction for solving it.
+
+---
+
+## Part 2 — CPU Exceptions
+
+**What's good:**
+- The 6-step CPU exception handling sequence is correct hardware behavior.
+- The preserved/scratch register distinction and why `extern "x86-interrupt"` exists is correctly
+  explained. Key insight — "the compiler doesn't know when an exception might occur, so it can't
+  insert caller-save instructions" — stated correctly.
+- "Rust doesn't follow C ABI and there is no Rust ABI yet" is accurate; shows you understand why
+  `extern` keywords exist.
+
+Code connection: `interrupts.rs:53` — `extern "x86-interrupt" fn breakpoint_handler` matches.
+
+---
+
+## Part 2 — Double Faults
+
+**What's good:**
+- Stack overflow → page fault → page fault on handler stack → double fault → triple fault chain
+  is traced correctly.
+- Detail: "Virtual Address will give us the starting address which is the bottom address. We write
+  the top address as our stack grows downwards on x86" — subtle but correct. Confirmed in
+  `gdt.rs:16-17`: `stack_end = stack_start + STACK_SIZE` is what goes into the IST.
+
+**Original insight:**
+- Multi-threaded web server analogy for thinking about thread-level vs kernel-level fault recovery
+  is entirely yours and not in the tutorial. Good mental model.
+
+**Inaccuracy to fix:**
+- "The TSS is a special structure to store the CPU state before context switch." — On x86_64, TSS
+  is NOT used for task switching (that's a legacy 32-bit feature). Its primary use in 64-bit mode
+  is IST (interrupt stack switching) and privilege stack table (ring transitions). The `gdt.rs`
+  code reflects this — only `interrupt_stack_table[0]` is set, no task-state fields. Correct this
+  in your mental model.
+
+---
+
+## Part 2 — Hardware Interrupts
+
+**What's good:**
+- PIC offset override correctly explained — interrupts 0-31 reserved for CPU exceptions, so PIC
+  remapped to 32+. Matches `PIC_1_OFFSET = 32` in `interrupts.rs:10`.
+- EOI requirement and `notify_end_of_interrupt` correctly identified.
+- Deadlock scenario correctly traced: timer fires while Writer lock held → handler tries to print
+  → deadlock.
+
+**Critical thinking:**
+- "This is not the correct way to fix this issue" (about `without_interrupts` for deadlock) —
+  correct. It's a workaround. The proper fix would be an interrupt-context-aware lock.
+
+---
+
+## Part 3 — Intro to Paging
+
+**What's good:**
+- Segmentation → virtual memory → fragmentation → paging flow correctly traced.
+- 4-level page table arithmetic: `4096 bytes / 8 bytes = 512 entries` is correct.
+- TLB section accurate, especially: "the TLB is not fully transparent and does not update or
+  remove translations when the contents of page tables change" — the key non-obvious point.
+- CR2 register for page fault address is correct; confirmed in `interrupts.rs:110-113`.
+
+**Original connection:**
+- Opening with ARM's MPU as a comparison point for memory protection shows broader hardware
+  awareness not present in the tutorial.
+
+---
+
+## Part 3 — Paging Implementation
+
+**What's good:**
+- All 5 approaches to page table access listed with trade-offs.
+- Recursive page tables trick (setting L4 entry to CR3 so hardware treats L4 as L3) correctly
+  described. All 3 disadvantages listed.
+
+**Subtle insight:**
+- "We need to create mapping even for complete mapping as we cannot use offset because the
+  bootloader uses page tables." — Non-obvious. The bootloader's mapping is used as-is; you can't
+  apply a raw offset without first creating the offset mapping. Correctly understood.
+
+**Code gap:**
+- Notes stop before covering `BootInfoFrameAllocator` in `memory.rs` and `create_example_mapping`.
+  Worth adding.
+
+---
+
+## Topics With No Notes (Code-Only)
+
+The code has three significant areas with no corresponding notes:
+
+| Topic                                             | Code file(s)                                          |
+|---------------------------------------------------|-------------------------------------------------------|
+| Heap allocation (Bump, LinkedList, FixedSizeBlock) | allocator/bump.rs, allocator/linked_list.rs, allocator/fixed_size_block.rs |
+| Async/Await executor (waker + sleep-if-idle)      | task/executor.rs, task/keyboard.rs                    |
+| Heap init + frame allocator                       | allocator.rs::init_heap, memory.rs::BootInfoFrameAllocator |
+
+The executor in `task/executor.rs` is one of the more complex pieces — `TaskWaker` +
+`Arc<ArrayQueue>` + `sleep_if_idle` with `enable_and_hlt` has real design depth. The
+`ScancodeStream` in `task/keyboard.rs` is also a good example of implementing `Stream` on top of
+an interrupt-driven queue with `AtomicWaker`. Both are worth documenting.
+
+---
+
+## Summary
+
+Your notes are above average for a tutorial follow-along. You:
+- Capture the *why* not just the *what* for most concepts
+- Ask genuine questions the tutorial doesn't answer (panic `!`, deadlock fix quality)
+- Make cross-domain connections (web servers, ARM, NCurses)
+- Flag things you're uncertain about rather than pretending to understand them
+
+Things to fix or add:
+1. Correct the TSS description — not for context switching in x86_64, it's for IST/privilege stack
+2. Note that `Buffer` also uses `repr(transparent)`, not just `ColorCode`
+3. Write notes for the allocator implementations — bump, linked list, and fixed-size block each
+   have distinct trade-offs worth capturing
+4. Write notes for the async executor — the waker notification model and sleep-if-idle pattern are
+   the most conceptually dense parts of the whole tutorial

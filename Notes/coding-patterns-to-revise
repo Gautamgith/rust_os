@@ -1,0 +1,242 @@
+# Coding Patterns to Revise
+
+Patterns observed in the OS codebase worth studying in depth.
+
+---
+
+## 1. Newtype Pattern for Type Safety
+
+`vga_buffer.rs:31`, `task/mod.rs:29`
+
+```rust
+#[repr(transparent)]
+struct ColorCode(u8);
+
+struct TaskId(u64);
+```
+
+Wrapping a primitive in a struct to make it a distinct type. `ColorCode` and `u8` are the same
+in memory, but the compiler treats them as different — you can't pass a raw `u8` where a
+`ColorCode` is expected. Good pattern to prevent mixing up unrelated integers.
+
+---
+
+## 2. Interior Mutability via a Custom Locked Wrapper
+
+`allocator.rs:17-31`
+
+```rust
+pub struct Locked<A> {
+    inner: spin::Mutex<A>,
+}
+```
+
+`GlobalAlloc::alloc` takes `&self` (shared reference), but allocating requires mutation.
+`Locked<A>` wraps a spinlock so mutation is allowed through a shared reference. This is the
+standard interior mutability pattern, here rolled manually instead of using `RefCell` (not `Sync`)
+or `std::Mutex` (unavailable). Understand why `GlobalAlloc` requires `&self` and why that forces
+this design.
+
+---
+
+## 3. `unsafe impl` for Safety Contracts You Uphold Manually
+
+`memory.rs:13`, `allocator/bump.rs:28`
+
+```rust
+unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator { ... }
+unsafe impl GlobalAlloc for Locked<BumpAllocator> { ... }
+```
+
+These traits are `unsafe` because the compiler can't verify correctness — you're promising "I
+guarantee all `USABLE` frames in the memory map are actually unused" or "my allocator won't return
+overlapping regions." Study what invariants each `unsafe trait` requires; the `unsafe impl` is
+your explicit commitment to upholding them.
+
+---
+
+## 4. Split Borrow via Struct Destructuring
+
+`task/executor.rs:32-36`
+
+```rust
+fn run_ready_tasks(&mut self) {
+    let Self { tasks, task_queue, waker_cache } = self;
+    // now borrow tasks, task_queue, waker_cache independently
+```
+
+Rust's borrow checker tracks borrows per field when you destructure. Without this,
+`self.tasks.get_mut(...)` and `self.task_queue.clone()` in the same scope would both be `&mut
+self` borrows and conflict. Destructuring splits them into separate bindings so the borrow checker
+allows both simultaneously.
+
+---
+
+## 5. `impl Iterator` / `impl Trait` Return Type
+
+`memory.rs:42`
+
+```rust
+fn usable_frames(&self) -> impl Iterator<Item = PhysFrame> {
+    let regions = self.memory_map.iter();
+    let usable_regions = regions.filter(...);
+    let addr_ranges = usable_regions.map(...);
+    let frame_addresses = addr_ranges.flat_map(...);
+    frame_addresses.map(...)
+}
+```
+
+Returns an opaque iterator type without naming the full chained iterator type (which would be
+unwriteable). Each combinator creates a new anonymous type; `impl Iterator` lets you return the
+whole chain without boxing it. Compare to `Box<dyn Iterator>` which heap-allocates — `impl Trait`
+is zero-cost.
+
+---
+
+## 6. `Option<&'static mut T>` as a Safe Linked List Node
+
+`allocator/linked_list.rs:31-35`
+
+```rust
+struct ListNode {
+    size: usize,
+    next: Option<&'static mut ListNode>,
+}
+```
+
+A linked list in unsafe Rust usually uses raw pointers (`*mut`). Using `Option<&'static mut
+ListNode>` instead encodes nullability in the type (`None` = no next node) and preserves aliasing
+rules — `&'static mut` is an exclusive reference. The `'static` lifetime says the node lives in
+the heap for the program's lifetime. Study how `node.next.take()` is used to move out of the
+option and break the chain safely.
+
+---
+
+## 7. Atomic Operations for Lock-Free State
+
+`task/mod.rs:34`
+
+```rust
+static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+TaskId(NEXT_ID.fetch_add(1, Ordering::Relaxed))
+```
+
+`fetch_add` atomically increments and returns the old value — no lock needed. `Ordering::Relaxed`
+is sufficient here because the IDs just need to be unique, not ordered relative to other memory
+operations. Know the difference between `Relaxed`, `Acquire`, `Release`, and `SeqCst`.
+
+---
+
+## 8. `Arc<T>` + `Wake` Trait for Waker Implementation
+
+`task/executor.rs:76-101`
+
+```rust
+struct TaskWaker {
+    task_id: TaskId,
+    task_queue: Arc<ArrayQueue<TaskId>>,
+}
+
+impl Wake for TaskWaker {
+    fn wake(self: Arc<Self>) {
+        self.wake_task();
+    }
+}
+```
+
+`Waker` requires the type to be clonable (it may be stored and fired from multiple places).
+`Arc<TaskWaker>` provides shared ownership across the executor and any external interrupt handler
+that holds a clone. `Wake` is implemented on `Arc<Self>` specifically —
+`Waker::from(Arc::new(TaskWaker {...}))` converts it. This is the canonical pattern for custom
+async runtimes.
+
+---
+
+## 9. Race-Condition-Free Waker Registration
+
+`task/keyboard.rs:42-53`
+
+```rust
+fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<u8>> {
+    let queue = SCANCODE_QUEUE.try_get().expect("Not initialized");
+    if let Some(scancode) = queue.pop() {
+        return Poll::Ready(Some(scancode));
+    }
+    WAKER.register(&cx.waker());   // register BEFORE second check
+    match queue.pop() {
+        Some(scancode) => { WAKER.take(); Poll::Ready(Some(scancode)) }
+        None => Poll::Pending,
+    }
+}
+```
+
+The double-check is intentional. Without the second `queue.pop()` after registering the waker,
+there's a race: interrupt fires between the first `pop` (returns None) and `register`, pushing a
+scancode and calling `wake()` — but no waker is registered yet, so the task sleeps forever.
+Registering first, then checking again closes the window. This is a classic async pattern.
+
+---
+
+## 10. Atomic Enable-and-Halt for Idle Sleep
+
+`task/executor.rs:64-72`
+
+```rust
+fn sleep_if_idle(&self) {
+    interrupts::disable();
+    if self.task_queue.is_empty() {
+        enable_and_hlt();   // atomic: enables interrupts AND halts in one step
+    } else {
+        interrupts::enable();
+    }
+}
+```
+
+`enable_and_hlt()` is a single CPU instruction sequence that prevents a wake-up from being missed.
+If you did `enable(); hlt();` separately, an interrupt could fire between the two — the task queue
+gets populated, `wake()` fires, but the CPU hasn't halted yet and the wakeup is lost. The CPU
+then halts and waits forever. This is a hardware-level race condition and `enable_and_hlt` is the
+correct fix.
+
+---
+
+## 11. `Pin<Box<dyn Future>>` for Heap-Allocated Futures
+
+`task/mod.rs:11`
+
+```rust
+future: Pin<Box<dyn Future<Output = ()>>>,
+```
+
+`Pin` prevents the future from being moved in memory after it starts executing (self-referential
+futures would break if moved). `Box` heap-allocates it so the `Task` struct has a fixed size
+regardless of how large the concrete future is. `dyn Future` makes it a trait object so different
+future types can be stored in the same collection. All three are needed together for a practical
+executor.
+
+---
+
+## 12. `OnceCell` for Interrupt-Safe One-Time Initialization
+
+`task/keyboard.rs:12`
+
+```rust
+static SCANCODE_QUEUE: OnceCell<ArrayQueue<u8>> = OnceCell::uninit();
+```
+
+The queue can't be initialized at compile time (it needs heap allocation), but it also can't use
+`lazy_static!` here because the interrupt handler calls `try_get()` — if initialization panicked,
+`lazy_static` would deadlock. `OnceCell::try_init_once` initializes exactly once and `try_get`
+returns an error rather than blocking if uninitialized. Used where the "not yet initialized" case
+must be handled explicitly rather than panicked on.
+
+---
+
+## Priority Order for Revision
+
+1. Interior mutability (`Locked<A>`, `RefCell`, `Mutex`) — foundational, appears everywhere
+2. `unsafe impl` contracts — critical for systems code; know what you're promising
+3. Split borrow via destructuring — saves you from fighting the borrow checker
+4. `impl Trait` returns — used constantly in iterator chains
+5. `Pin` + `Box<dyn Future>` — essential for async runtime code
+6. Atomic waker pattern (double-check) — subtle but important for correct async I/O
